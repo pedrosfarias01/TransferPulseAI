@@ -32,16 +32,34 @@ def _resolve_webhook_url() -> str:
     return (os.getenv("SLACK_WEBHOOK_URL") or "").strip()
 
 
+# Emoji per trading action so the desk can see the intent at a glance.
+# Keys must match the Literal values in agents/trading_impact.py.
+_ACTION_EMOJI = {
+    "Create new content": "🔵",
+    "Suspend and Adjust Prices": "🚨",
+    "Suspend and Review for Late Bets": "🔴",
+    "No changes needed": "⚪",  # never actually reaches Slack, kept for safety
+}
+
+
+def _decorate_action(action: str) -> str:
+    emoji = _ACTION_EMOJI.get(action, "🎯")
+    return f"{emoji} *{action}*"
+
+
 def _build_blocks(
     market: str, summary: str, raw_post: str, suggested_action: str
 ) -> dict:
     """Compose the Slack message payload (Block Kit + plain-text fallback)."""
-    header = f"🔔 TransferPulse alert · {market}"
+    action_line = _decorate_action(suggested_action)
+    action_emoji = _ACTION_EMOJI.get(suggested_action, "🚨")
+    header = f"{action_emoji} TransferPulse alert · {market}"
     text = (
         f"*{header}*\n"
-        f"*Summary:* {summary}\n"
-        f"*Raw post:* {raw_post}\n"
-        f"*Suggested action:* {suggested_action}"
+        f"🎯 *Market:* {market}\n"
+        f"📝 *Summary:* {summary}\n"
+        f"🐦 *Raw post:* {raw_post}\n"
+        f"💡 *Suggested action:* {action_emoji} {suggested_action}"
     )
     return {
         "text": text,  # fallback for notifications / older clients
@@ -53,20 +71,20 @@ def _build_blocks(
             {
                 "type": "section",
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*Market*\n{market}"},
+                    {"type": "mrkdwn", "text": f"🎯 *Market*\n{market}"},
                     {
                         "type": "mrkdwn",
-                        "text": f"*Suggested action*\n{suggested_action}",
+                        "text": f"💡 *Suggested action*\n{action_line}",
                     },
                 ],
             },
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*Summary*\n{summary}"},
+                "text": {"type": "mrkdwn", "text": f"📝 *Summary*\n{summary}"},
             },
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*Raw post*\n>{raw_post}"},
+                "text": {"type": "mrkdwn", "text": f"🐦 *Raw post*\n>{raw_post}"},
             },
         ],
     }
