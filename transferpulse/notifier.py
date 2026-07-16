@@ -9,10 +9,27 @@ so failures are swallowed and reported back as a short reason string.
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 
-import config
+
+def _resolve_webhook_url() -> str:
+    """Look up the Slack webhook lazily, on every call.
+
+    Order: Streamlit secrets → env var → empty. Reading at call time (not at
+    module import) avoids the classic Streamlit Cloud race where a module-level
+    ``os.getenv`` fires before the secrets → env mirror is populated.
+    """
+    try:
+        import streamlit as st  # imported lazily so notifier stays testable
+        url = st.secrets.get("SLACK_WEBHOOK_URL", "")
+        if url:
+            return str(url).strip()
+    except Exception:
+        # No streamlit context, or no secrets.toml — fall through to env.
+        pass
+    return (os.getenv("SLACK_WEBHOOK_URL") or "").strip()
 
 
 def _build_blocks(
@@ -66,9 +83,9 @@ def send_alert(
     Returns ``(ok, detail)``. Never raises — a Slack failure must not break the
     pipeline, so any error is caught and returned as ``(False, reason)``.
     """
-    url = config.SLACK_WEBHOOK_URL
+    url = _resolve_webhook_url()
     if not url:
-        return False, "no webhook configured"
+        return False, "no webhook configured (set SLACK_WEBHOOK_URL in secrets or .env)"
 
     payload = _build_blocks(market, summary, raw_post, suggested_action)
     data = json.dumps(payload).encode("utf-8")

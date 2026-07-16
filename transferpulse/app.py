@@ -531,8 +531,14 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
                         raw_post=event.get("raw_content", ""),
                         suggested_action=assessment.suggested_action,
                     )
-                    if not ok:
+                    if ok:
+                        st.toast("✅ Slack alert sent", icon="💬")
+                    else:
+                        # Toast + error banner: banner may be cleared on the
+                        # next successful tick, but the toast persists briefly.
+                        st.toast(f"⚠ Slack: {detail}", icon="⚠")
                         st.session_state.error = f"Slack alert failed: {detail}"
+                        print(f"[notifier] Slack alert failed: {detail}", flush=True)
             return True
 
     # --- 3. assess the oldest unprocessed post -----------------------------
