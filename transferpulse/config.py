@@ -37,8 +37,9 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 # --- Paths -----------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 
-# Provided, read-only fixtures.
-FIXTURES_POSTS = BASE_DIR / "fixtures" / "posts.csv"
+# Provided, read-only fixtures. `raw_posts_filtered.csv` is the current
+# default demo set; `posts.csv` is kept alongside as a smaller fallback.
+FIXTURES_POSTS = BASE_DIR / "fixtures" / "raw_posts_filtered.csv"
 SOURCES_CSV = BASE_DIR / "config" / "sources.csv"
 
 # Sportradar logo shown in the sidebar. Lives at the repo root (one level up
