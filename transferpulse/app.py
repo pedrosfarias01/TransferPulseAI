@@ -85,12 +85,28 @@ st.markdown(
 
 
 @st.cache_resource
+def _build_client(api_key: str) -> OpenAI:
+    """Cached per-key OpenAI client so swapping keys in Dev tools rebuilds it."""
+    return OpenAI(api_key=api_key)
+
+
+def _current_api_key() -> tuple[str, str]:
+    """Return (key, source). Source is 'session', 'env', or '' if none."""
+    override = st.session_state.get("openai_api_key_override", "").strip()
+    if override:
+        return override, "session"
+    env_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if env_key:
+        return env_key, "env"
+    return "", ""
+
+
 def get_client() -> OpenAI | None:
-    """Build the OpenAI client once. Returns None if no key is configured."""
-    key = os.getenv("OPENAI_API_KEY")
+    """Build the OpenAI client. Returns None if no key is configured."""
+    key, _ = _current_api_key()
     if not key:
         return None
-    return OpenAI(api_key=key)
+    return _build_client(key)
 
 
 @st.cache_data
@@ -205,6 +221,8 @@ def init_state() -> None:
     # When the user loads their own posts, the collector must NOT top the queue
     # up from the default fixture — the loaded set is the whole queue.
     ss.setdefault("custom_posts", False)
+    # Optional session-only OpenAI key override (set via sidebar → Dev tools).
+    ss.setdefault("openai_api_key_override", "")
 
 
 init_state()
@@ -275,6 +293,40 @@ def render_sidebar() -> list[str]:
         st.rerun()
 
     with st.sidebar.expander("🛠 Dev tools", expanded=False):
+        _, key_source = _current_api_key()
+        if key_source == "env":
+            st.caption("🔑 OpenAI key: loaded from environment (.env).")
+        elif key_source == "session":
+            st.caption("🔑 OpenAI key: set for this session.")
+        else:
+            st.caption("🔑 OpenAI key: **not set** — paste one below to test.")
+
+        key_input = st.text_input(
+            "OpenAI API key",
+            value="",
+            type="password",
+            placeholder="sk-...",
+            help=(
+                "Paste your own OpenAI key to test the app without a .env file. "
+                "Stored in this browser session only — never written to disk."
+            ),
+            key="_openai_api_key_input",
+        )
+        kc1, kc2 = st.columns(2)
+        if kc1.button("Save key", width="stretch"):
+            if key_input.strip():
+                st.session_state.openai_api_key_override = key_input.strip()
+                st.session_state.status = "OpenAI key set for this session."
+                st.session_state.error = ""
+                st.rerun()
+            else:
+                st.session_state.error = "Paste a key before saving."
+        if kc2.button("Clear key", width="stretch"):
+            st.session_state.openai_api_key_override = ""
+            st.session_state.status = "Session key cleared."
+            st.rerun()
+
+        st.divider()
         st.caption(
             "Reprocess: same posts, board cleared, re-run Agents 2+3 "
             "without re-fetching."
@@ -888,8 +940,9 @@ def main() -> None:
 
     if client is None:
         st.error(
-            "No `OPENAI_API_KEY` found. Add it to a `.env` file next to "
-            "`app.py` (see `.env.example`) and reload."
+            "No `OPENAI_API_KEY` found. Either add it to a `.env` file next to "
+            "`app.py` (see `.env.example`) **or** paste one into the sidebar → "
+            "🛠 Dev tools → OpenAI API key."
         )
         st.session_state.running = False
 
