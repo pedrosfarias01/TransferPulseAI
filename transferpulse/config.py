@@ -17,7 +17,8 @@ SEED = 42
 # How many posts Agent 1 releases from the fixture per fetch.
 FETCH_BATCH_SIZE = 3
 # Seconds to pause between pipeline ticks so a human can follow the flow.
-TICK_SLEEP_SECONDS = 0.5
+# Adjustable at runtime via sidebar → Dev tools; this is only the default.
+TICK_SLEEP_SECONDS = 4.0
 
 # --- Trading desk ----------------------------------------------------------
 # Impact score (0-100) at/above which — combined with new information — an

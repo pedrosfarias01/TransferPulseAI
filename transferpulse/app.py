@@ -78,6 +78,31 @@ st.markdown(
                margin-left: 6px; padding-left: 14px; }
       .tp-tl-item { margin-bottom: 12px; }
       .tp-tl-time { color: #888; font-size: 0.78rem; }
+      /* --- agent pipeline banner --- */
+      .tp-pipe { display: flex; align-items: stretch; margin: 4px 0 8px 0; }
+      .tp-agent {
+        flex: 1; border: 1px solid rgba(128,128,128,0.35); border-radius: 10px;
+        padding: 10px 14px; background: rgba(128,128,128,0.07);
+        opacity: 0.5; transition: opacity .3s, border-color .3s;
+      }
+      .tp-agent .name { font-weight: 700; font-size: 0.95rem; }
+      .tp-agent .desc { color: #999; font-size: 0.74rem; }
+      .tp-agent .note { margin-top: 6px; font-size: 0.8rem; color: #ccc;
+                        min-height: 1.2em; }
+      .tp-agent.active {
+        opacity: 1; border-color: #ff4b4b; background: rgba(255,75,75,0.10);
+        animation: tp-pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes tp-pulse {
+        0%, 100% { box-shadow: 0 0 5px rgba(255,75,75,0.25); }
+        50%      { box-shadow: 0 0 16px rgba(255,75,75,0.55); }
+      }
+      .tp-arrow { align-self: center; padding: 0 12px; font-size: 1.5rem;
+                  color: #777; }
+      .tp-flight {
+        margin-top: 6px; color: #bbb; font-size: 0.82rem; font-style: italic;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -223,6 +248,14 @@ def init_state() -> None:
     ss.setdefault("custom_posts", False)
     # Optional session-only OpenAI key override (set via sidebar → Dev tools).
     ss.setdefault("openai_api_key_override", "")
+    # Pipeline banner: which agent card is lit, what each last did, and the
+    # item currently in flight (post snippet or player being scored).
+    ss.setdefault("stage", "")               # "collect" | "review" | "score"
+    ss.setdefault("agent_notes", {"collect": "", "review": "", "score": ""})
+    ss.setdefault("in_flight", "")
+    # Demo pacing / collection switch (sidebar → Dev tools).
+    ss.setdefault("tick_sleep", config.TICK_SLEEP_SECONDS)
+    ss.setdefault("collect_enabled", True)
 
 
 init_state()
@@ -290,9 +323,24 @@ def render_sidebar() -> list[str]:
         st.session_state.status = "Reset. Queue and board cleared."
         st.session_state.flash = ""
         st.session_state.error = ""
+        _reset_pipeline_banner()
         st.rerun()
 
     with st.sidebar.expander("🛠 Dev tools", expanded=False):
+        st.slider(
+            "Agent pace (seconds per step)",
+            min_value=0.0, max_value=10.0, step=0.5,
+            key="tick_sleep",
+            help="Pause between pipeline steps so the audience can follow.",
+        )
+        st.toggle(
+            "Agent 1 — collect new posts",
+            key="collect_enabled",
+            help="Off: no more posts enter the queue; Agents 2 and 3 "
+            "keep draining what is already there.",
+        )
+        st.divider()
+
         _, key_source = _current_api_key()
         if key_source == "env":
             st.caption("🔑 OpenAI key: loaded from environment (.env).")
@@ -338,6 +386,7 @@ def render_sidebar() -> list[str]:
             st.session_state.status = "Reprocess ready. Press Start to re-score."
             st.session_state.flash = ""
             st.session_state.error = ""
+            _reset_pipeline_banner()
             st.rerun()
 
         st.divider()
@@ -373,6 +422,7 @@ def render_sidebar() -> list[str]:
                 )
                 st.session_state.flash = ""
                 st.session_state.error = ""
+                _reset_pipeline_banner()
             st.rerun()
 
     _render_manual_post_form(selected)
@@ -465,8 +515,10 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
     # --- 1. keep the queue topped up ---------------------------------------
     # Skip the fixture entirely when the user has loaded their own posts: the
     # loaded set IS the whole queue, so the collector must not add defaults.
+    # The Dev tools toggle can also switch collection off mid-demo.
     if (
-        not st.session_state.get("custom_posts", False)
+        st.session_state.get("collect_enabled", True)
+        and not st.session_state.get("custom_posts", False)
         and len(unprocessed) < 3
         and collector.unreleased_count(selected) > 0
     ):
@@ -474,7 +526,9 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
         if rows:
             store.append_raw_posts(rows)
             handles = ", ".join(f"@{r['source_handle']}" for r in rows)
-            st.session_state.status = f"Agent 1: fetched {len(rows)} post(s) — {handles}"
+            note = f"Fetched {len(rows)} post(s) — {handles}"
+            _set_stage("collect", note, _snippet(rows[0]["raw_content"]))
+            st.session_state.status = f"Agent 1 · Content Collector: {note}"
             return True
 
     # --- 2. price the oldest unpriced signal -------------------------------
@@ -484,7 +538,9 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
         if not unpriced.empty:
             row = unpriced.sort_values("id", key=lambda c: pd.to_numeric(c)).iloc[0]
             event = row.to_dict()
-            st.session_state.status = f"Agent 3: scoring {event.get('player','')}…"
+            player = event.get("player", "")
+            _set_stage("score", f"Scoring {player}…", _snippet(event.get("headline", "")))
+            st.session_state.status = f"Agent 3 · Trading Analyst: scoring {player}…"
 
             # Build this market's already-priced timeline, oldest first.
             same = events[events["story_key"] == event["story_key"]]
@@ -513,6 +569,11 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
 
             # Mark the source post processed if not already.
             _mark_processed(event.get("raw_post_id", ""))
+
+            bell = " 🔔" if alert else ""
+            st.session_state.agent_notes["score"] = (
+                f"{player}: impact {assessment.impact_score}{bell}"
+            )
 
             if alert:
                 _push_alert(event, assessment.impact_score, assessment.impact_rationale)
@@ -545,7 +606,9 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
     if not unprocessed.empty:
         row = unprocessed.sort_values("id", key=lambda c: pd.to_numeric(c)).iloc[0]
         post = row.to_dict()
-        st.session_state.status = f"Agent 2: reading @{post.get('source_handle','')}…"
+        handle = post.get("source_handle", "")
+        _set_stage("review", f"Reading @{handle}…", _snippet(post.get("raw_content", "")))
+        st.session_state.status = f"Agent 2 · Content Reviewer: reading @{handle}…"
 
         # Give Agent 2 the markets already open so it reuses an existing
         # player spelling instead of splitting one person into two buckets.
@@ -582,13 +645,31 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
         # reprocess_all(), never by the processed flag alone.
         _mark_processed(post["id"])
         n = len(assessment.signals)
+        st.session_state.agent_notes["review"] = f"@{handle} → {n} signal(s)"
         st.session_state.status = (
-            f"Agent 2: @{post.get('source_handle','')} → "
-            f"{n} signal(s)"
+            f"Agent 2 · Content Reviewer: @{handle} → {n} signal(s)"
         )
         return True
 
     return False
+
+
+def _snippet(text: str, limit: int = 140) -> str:
+    text = " ".join(str(text or "").split())
+    return text[: limit - 1] + "…" if len(text) > limit else text
+
+
+def _set_stage(stage: str, note: str, in_flight: str) -> None:
+    """Light up one agent card and record what it is doing."""
+    st.session_state.stage = stage
+    st.session_state.agent_notes[stage] = note
+    st.session_state.in_flight = in_flight
+
+
+def _reset_pipeline_banner() -> None:
+    st.session_state.stage = ""
+    st.session_state.agent_notes = {"collect": "", "review": "", "score": ""}
+    st.session_state.in_flight = ""
 
 
 def _handle_for_event(raw: pd.DataFrame, event: dict) -> str:
@@ -654,6 +735,37 @@ def _open_market_players() -> list[str]:
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
+_PIPELINE_AGENTS = [
+    ("collect", "📥 Agent 1 · Content Collector", "Fetches new posts from the selected sources"),
+    ("review", "🔎 Agent 2 · Content Reviewer", "Reads each post and extracts transfer signals"),
+    ("score", "📊 Agent 3 · Trading Analyst", "Prices each signal's market impact (0–100)"),
+]
+
+
+def render_pipeline() -> None:
+    """The demo centrepiece: three agent cards, the active one lit up.
+
+    One unit of work runs per Streamlit rerun, so the highlight hops from
+    card to card as a post travels through the pipeline — no JS needed.
+    """
+    active = st.session_state.stage if st.session_state.running else ""
+    notes = st.session_state.agent_notes
+    cards = []
+    for stage, name, desc in _PIPELINE_AGENTS:
+        cls = "tp-agent active" if stage == active else "tp-agent"
+        note = notes.get(stage, "")
+        cards.append(
+            f"<div class='{cls}'><div class='name'>{name}</div>"
+            f"<div class='desc'>{desc}</div>"
+            f"<div class='note'>{note}</div></div>"
+        )
+    arrow = "<div class='tp-arrow'>➜</div>"
+    html = f"<div class='tp-pipe'>{arrow.join(cards)}</div>"
+    if st.session_state.running and st.session_state.in_flight:
+        html += f"<div class='tp-flight'>“{st.session_state.in_flight}”</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def render_alert_strip() -> None:
     st.subheader("🔔 Trading Alerts")
     alerts = st.session_state.alerts
@@ -970,10 +1082,11 @@ def main() -> None:
     with tab_markets:
         render_markets()
 
-    # --- status line content ----------------------------------------------
+    # --- pipeline banner + status line --------------------------------------
     with status_box:
         if st.session_state.error:
             st.error(st.session_state.error)
+        render_pipeline()
         run_flag = "🟢 Running" if st.session_state.running else "⚪ Idle"
         st.markdown(
             f"<div class='tp-status'>{run_flag} &nbsp; | &nbsp; "
@@ -987,17 +1100,18 @@ def main() -> None:
             st.session_state.status = "No sources selected — nothing to fetch."
             st.session_state.running = False
             return
+        pace = float(st.session_state.tick_sleep)
         try:
             did_work = run_one_tick(selected, client)
         except Exception as exc:  # surface, leave work undone to retry
             st.session_state.error = f"Pipeline error (will retry): {exc}"
-            time.sleep(config.TICK_SLEEP_SECONDS)
+            time.sleep(pace)
             st.rerun()
             return
 
         if did_work:
             st.session_state.error = ""
-            time.sleep(config.TICK_SLEEP_SECONDS)
+            time.sleep(pace)
             st.rerun()
         else:
             # Queue empty and everything priced.
