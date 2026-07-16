@@ -1,0 +1,13 @@
+# Secrets
+.env
+
+# Runtime data (regenerated; wiped by Reset)
+data/raw_posts.csv
+data/events.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.streamlit/secrets.toml
