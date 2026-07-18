@@ -467,23 +467,29 @@ def _render_manual_post_form(selected: list[str]) -> None:
     like a fetched post.
     """
     # Subtle pulse on the submit button so it invites a click, without any
-    # extra banner or copy. Scoped to the sidebar's form-submit button, which
-    # in this app is uniquely the "Inject post" action.
+    # extra banner or copy. Scoped to the sidebar's form-submit button — the
+    # multiple selectors cover Streamlit version drift (kind="primaryFormSubmit"
+    # on recent releases, data-testid on older). !important beats Streamlit's
+    # own box-shadow rules that otherwise wipe the animation out.
     st.sidebar.markdown(
         """
         <style>
           @keyframes tp-inject-pulse {
-            0%, 100% { box-shadow: 0 0 0 rgba(255,75,75,0.0); }
-            50%      { box-shadow: 0 0 12px rgba(255,75,75,0.65); }
+            0%, 100% { box-shadow: 0 0 4px rgba(255,75,75,0.25); }
+            50%      { box-shadow: 0 0 18px rgba(255,75,75,0.85); }
           }
-          [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
-            animation: tp-inject-pulse 1.8s ease-in-out infinite;
+          section[data-testid="stSidebar"] button[kind="primaryFormSubmit"],
+          section[data-testid="stSidebar"] button[data-testid="stFormSubmitButton"],
+          section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button,
+          section[data-testid="stSidebar"] form button[kind="primary"] {
+            animation: tp-inject-pulse 1.6s ease-in-out infinite !important;
+            border-radius: 8px !important;
           }
         </style>
         """,
         unsafe_allow_html=True,
     )
-    with st.sidebar.expander("➕ Add a fictional post", expanded=True):
+    with st.sidebar.expander("➕ Add a fictional post", expanded=False):
         st.caption("Only the post text is needed — the rest is pre-filled.")
         with st.form("manual_post", clear_on_submit=True):
             text = st.text_area(
