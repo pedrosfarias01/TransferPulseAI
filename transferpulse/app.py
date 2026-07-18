@@ -466,31 +466,30 @@ def _render_manual_post_form(selected: list[str]) -> None:
     lands with ``processed = 0``, so it is picked up on the next tick exactly
     like a fetched post.
     """
-    # Subtle pulse on the submit button so it invites a click, without any
-    # extra banner or copy. Scoped to the sidebar's form-submit button — the
-    # multiple selectors cover Streamlit version drift (kind="primaryFormSubmit"
-    # on recent releases, data-testid on older). !important beats Streamlit's
-    # own box-shadow rules that otherwise wipe the animation out.
+    # Pulse the expander header ("Add a fictional post") to invite the user to
+    # open it. The anchor span sits in the element-container immediately before
+    # the expander, so :has() + adjacent-sibling reaches exactly that header —
+    # the other sidebar expanders (Dev tools, Credibility tiers) stay still.
     st.sidebar.markdown(
         """
         <style>
-          @keyframes tp-inject-pulse {
-            0%, 100% { box-shadow: 0 0 4px rgba(255,75,75,0.25); }
-            50%      { box-shadow: 0 0 18px rgba(255,75,75,0.85); }
+          @keyframes tp-fic-pulse {
+            0%, 100% { box-shadow: 0 0 3px rgba(255,75,75,0.25); }
+            50%      { box-shadow: 0 0 16px rgba(255,75,75,0.80); }
           }
-          section[data-testid="stSidebar"] button[kind="primaryFormSubmit"],
-          section[data-testid="stSidebar"] button[data-testid="stFormSubmitButton"],
-          section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button,
-          section[data-testid="stSidebar"] form button[kind="primary"] {
-            animation: tp-inject-pulse 1.6s ease-in-out infinite !important;
-            border-radius: 8px !important;
+          section[data-testid="stSidebar"]
+            [data-testid="stElementContainer"]:has(.tp-fic-anchor)
+            + [data-testid="stElementContainer"] [data-testid="stExpander"] summary {
+            animation: tp-fic-pulse 1.6s ease-in-out infinite;
+            border-radius: 8px;
           }
         </style>
+        <span class="tp-fic-anchor"></span>
         """,
         unsafe_allow_html=True,
     )
     with st.sidebar.expander("➕ Add a fictional post", expanded=False):
-        st.caption("Only the post text is needed — the rest is pre-filled.")
+        st.caption("Type a rumour and watch it flow through Agents 1 → 2 → 3.")
         with st.form("manual_post", clear_on_submit=True):
             text = st.text_area(
                 "Post text",
@@ -498,10 +497,6 @@ def _render_manual_post_form(selected: list[str]) -> None:
                 "here we go! Deal agreed, medical booked.",
                 height=120,
             )
-            default_handle = selected[0] if selected else "FabrizioRomano"
-            handle = st.text_input("Source handle", value=default_handle)
-            author = st.text_input("Author", value="Demo Insider")
-            posted_at = st.text_input("Posted at (UTC)", value=_now_iso())
             submitted = st.form_submit_button(
                 "Inject post", width="stretch", type="primary"
             )
@@ -510,16 +505,19 @@ def _render_manual_post_form(selected: list[str]) -> None:
             if not text.strip():
                 st.warning("Add some post text first.")
             else:
+                # Source/author/date are demo boilerplate — a selected handle
+                # (so the credibility tier resolves) and "now" are plenty.
+                handle = selected[0] if selected else "FabrizioRomano"
                 new_id = store.next_id("raw_posts")
                 store.append_raw_posts(
                     [
                         {
                             "id": str(new_id),
-                            "source_handle": handle.strip(),
+                            "source_handle": handle,
                             # Unique URL so the collector never dedups it away.
                             "post_url": f"manual://post/{new_id}/{int(time.time())}",
-                            "author": author.strip(),
-                            "posted_at": posted_at.strip(),
+                            "author": "Demo Insider",
+                            "posted_at": _now_iso(),
                             "raw_content": text.strip(),
                             "fetched_at": _now_iso(),
                             "processed": "0",
@@ -527,7 +525,7 @@ def _render_manual_post_form(selected: list[str]) -> None:
                     ]
                 )
                 st.session_state.status = (
-                    f"➕ Injected fictional post from @{handle.strip()}. "
+                    f"➕ Injected fictional post from @{handle}. "
                     "Press Start to process."
                 )
                 st.rerun()
@@ -786,10 +784,36 @@ def _open_market_players() -> list[str]:
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
+# (stage_key, card_title, short_subtitle, long_tooltip)
 _PIPELINE_AGENTS = [
-    ("collect", "📥 Agent 1 · Content Collector", "Fetches new posts from the selected sources"),
-    ("review", "🔎 Agent 2 · Content Reviewer", "Reads each post and extracts transfer signals"),
-    ("score", "📊 Agent 3 · Trading Analyst", "Prices each signal's market impact (0–100)"),
+    (
+        "collect",
+        "📥 Agent 1 · Content Collector",
+        "Fetches posts via X.com API",
+        "Not an LLM. Collects posts from social media via the X.com API — "
+        "monitors selected journalists, trusted insiders and sports news "
+        "accounts, then hands the batch to Agent 2 for analysis.",
+    ),
+    (
+        "review",
+        "🔎 Agent 2 · Content Reviewer",
+        "Filters transfer-related posts",
+        "LLM-based, powered by OpenAI GPT-4o. Reviews each post to judge "
+        "its topic and relevance, and filters out anything unrelated to "
+        "player or manager transfers. Keeps rumours, negotiations and "
+        "official confirmations, then sends the filtered content to Agent 3.",
+    ),
+    (
+        "score",
+        "📊 Agent 3 · Trading Analyst",
+        "Evaluates signals & fires alerts",
+        "LLM-based, powered by OpenAI GPT-4o. Organises transfer events "
+        "into a timeline for each player or manager, compares new posts "
+        "with previous ones to see how the story is evolving, and "
+        "recommends the most appropriate action for the trading team. "
+        "Significant new events automatically fire a Slack alert with "
+        "the player/manager, a summary and the recommended trading action.",
+    ),
 ]
 
 
@@ -802,11 +826,15 @@ def render_pipeline() -> None:
     active = st.session_state.stage if st.session_state.running else ""
     notes = st.session_state.agent_notes
     cards = []
-    for stage, name, desc in _PIPELINE_AGENTS:
+    for stage, name, desc, tooltip in _PIPELINE_AGENTS:
         cls = "tp-agent active" if stage == active else "tp-agent"
         note = notes.get(stage, "")
+        # `title=` gives a native browser tooltip on hover with the fuller
+        # description — no extra UI, works everywhere.
+        safe_tip = tooltip.replace('"', "&quot;")
         cards.append(
-            f"<div class='{cls}'><div class='name'>{name}</div>"
+            f"<div class='{cls}' title=\"{safe_tip}\">"
+            f"<div class='name'>{name}</div>"
             f"<div class='desc'>{desc}</div>"
             f"<div class='note'>{note}</div></div>"
         )
@@ -886,7 +914,7 @@ def render_live_feed() -> None:
 def _compose_impact(row) -> str:
     score = str(row.get("impact_score", "") or "").strip()
     if score == "":
-        return "⏳ pricing…"
+        return "⏳ evaluating…"
     bell = " 🔔" if str(row.get("alert", "")) in ("True", "true") else ""
     return f"{score}{bell} — {row.get('impact_rationale','')}"
 
@@ -972,15 +1000,15 @@ def _market_status(group: pd.DataFrame) -> str:
     """A market's current status = the suggested_action of its latest event."""
     priced = group[group["suggested_action"].astype(str).str.strip() != ""]
     if priced.empty:
-        return "Pricing…"
+        return "Evaluating…"
     latest = priced.sort_values("event_date").iloc[-1]
-    return str(latest["suggested_action"]) or "Pricing…"
+    return str(latest["suggested_action"]) or "Evaluating…"
 
 
 def render_markets() -> None:
     events = store.read_events()
     if events.empty:
-        st.info("No markets yet. They open as the first rumours are priced.")
+        st.info("No markets yet. They open as the first rumours are evaluated.")
         return
 
     # Order markets by most recent activity.
@@ -1067,7 +1095,7 @@ def render_markets() -> None:
                 t = str(ev["event_date"])[:16].replace("T", " ")
                 score = str(ev["impact_score"] or "").strip()
                 if score == "":
-                    chip = "<span class='tp-chip' style='background:#666'>pricing…</span>"
+                    chip = "<span class='tp-chip' style='background:#666'>evaluating…</span>"
                 else:
                     chip = (
                         f"<span class='tp-chip' style='background:{impact_color(score)}'>"
@@ -1100,7 +1128,7 @@ def render_markets() -> None:
 def main() -> None:
     st.title("📡 TransferPulse AI")
     st.caption(
-        "Real-time transfer & free-agency intelligence — spot and price "
+        "Real-time transfer & free-agency intelligence — spot and evaluate "
         "Next Club / Next Team markets before the field."
     )
 
@@ -1167,7 +1195,7 @@ def main() -> None:
         else:
             # Queue empty and everything priced.
             st.session_state.running = False
-            st.session_state.status = "✅ Done — queue drained, all signals priced."
+            st.session_state.status = "✅ Done — queue drained, all signals evaluated."
             st.rerun()
 
 
