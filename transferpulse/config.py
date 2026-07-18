@@ -19,7 +19,7 @@ SEED = 42
 FETCH_BATCH_SIZE = 1
 # Seconds to pause between pipeline ticks so a human can follow the flow.
 # Adjustable at runtime via sidebar → Dev tools; this is only the default.
-TICK_SLEEP_SECONDS = 4.0
+TICK_SLEEP_SECONDS = 1.0
 
 # --- Trading desk ----------------------------------------------------------
 # Impact score (0-100) at/above which — combined with new information — an
