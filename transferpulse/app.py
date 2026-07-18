@@ -298,9 +298,16 @@ def render_sidebar() -> list[str]:
         icon = {"Football": "⚽", "Basketball": "🏀"}.get(sport, "•")
         return f"{icon} @{handle}  ·  tier {tier}"
 
-    default = st.session_state.selected_handles
-    if default is None:
+    # Streamlit requires every `default` value to be present in `options`, or
+    # multiselect raises. A stored selection can fall out of sync with the live
+    # source list — sources.csv is edited, a source is disabled, or an old
+    # session persists a handle that no longer exists — so always intersect the
+    # stored selection with the current options before handing it to the widget.
+    stored = st.session_state.selected_handles
+    if stored is None:
         default = options
+    else:
+        default = [h for h in stored if h in options]
 
     selected = st.sidebar.multiselect(
         "Accounts",
