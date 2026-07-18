@@ -296,6 +296,19 @@ def render_sidebar() -> list[str]:
     )
     st.session_state.selected_handles = selected
 
+    # Warn when sources are unticked: those posts never enter the queue, so the
+    # run will stop early. This is the usual reason "only N posts processed".
+    if options and set(selected) != set(options):
+        skipped, handles = _deselected_with_posts(selected)
+        if skipped > 0:
+            st.sidebar.warning(
+                f"⚠ {len(selected)}/{len(options)} sources selected — "
+                f"**{skipped} post(s) will be skipped** from unticked "
+                f"source(s): {', '.join('@' + h for h in handles)}. "
+                "Tick them to process the whole fixture.",
+                icon="⚠️",
+            )
+
     # Tier legend so the demo can point at credibility.
     with st.sidebar.expander("Credibility tiers", expanded=False):
         for _, r in src.sort_values("credibility_tier").iterrows():
@@ -769,6 +782,30 @@ def _market_title(player: str, sport: str) -> str:
     return f"{player} {suffix}"
 
 
+def _deselected_with_posts(selected: list[str]) -> tuple[int, list[str]]:
+    """Fixture posts that will be SKIPPED because their source is unticked.
+
+    Agent 1 only releases posts from the sources selected in the sidebar, so a
+    deselected source's posts never enter the queue. Returns ``(count, handles)``
+    for the enabled-but-unticked sources that still have posts in the fixture, so
+    the UI can explain an early "Done" instead of silently dropping them.
+    """
+    src = sources_df()
+    enabled = src[src["enabled"].astype(str).isin(["1", "1.0", "True", "true"])]
+    enabled_handles = list(enabled["handle"])
+    sel = set(selected or [])
+    deselected = [h for h in enabled_handles if h not in sel]
+    if not deselected:
+        return 0, []
+    fixture = store.read_fixture_posts()
+    if fixture.empty:
+        return 0, []
+    counts = fixture["source_handle"].value_counts().to_dict()
+    with_posts = [h for h in deselected if counts.get(h, 0) > 0]
+    total = sum(counts.get(h, 0) for h in with_posts)
+    return total, with_posts
+
+
 def _open_market_players() -> list[str]:
     """One canonical player name per open market, for Agent 2 dedup.
 
@@ -1200,9 +1237,28 @@ def main() -> None:
             time.sleep(pace)
             st.rerun()
         else:
-            # Queue empty and everything priced.
+            # Queue empty and everything priced. Be honest about coverage: if
+            # sources are unticked, their posts were never released, so "Done"
+            # does NOT mean the whole fixture was processed.
             st.session_state.running = False
-            st.session_state.status = "✅ Done — queue drained, all signals evaluated."
+            raw = store.read_raw_posts()
+            processed = (
+                int((raw["processed"].astype(str) == "1").sum())
+                if not raw.empty else 0
+            )
+            skipped, handles = _deselected_with_posts(selected)
+            if skipped > 0:
+                st.session_state.status = (
+                    f"✅ Done — {processed} post(s) processed. "
+                    f"⚠ {skipped} skipped from unticked source(s): "
+                    f"{', '.join('@' + h for h in handles)}. "
+                    "Tick them and press Start to process the rest."
+                )
+            else:
+                st.session_state.status = (
+                    f"✅ Done — {processed} post(s) processed; "
+                    "queue drained, all signals evaluated."
+                )
             st.rerun()
 
 
