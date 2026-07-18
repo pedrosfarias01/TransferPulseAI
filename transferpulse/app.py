@@ -135,8 +135,23 @@ def get_client() -> OpenAI | None:
 
 
 @st.cache_data
-def sources_df() -> pd.DataFrame:
+def _sources_df_cached(_mtime: float) -> pd.DataFrame:
+    """Read the sources table, cached per file modification time.
+
+    ``_mtime`` is only a cache key: when sources.csv is edited its mtime
+    changes, so Streamlit re-reads instead of serving a stale table. Without
+    this, edits to sources.csv (e.g. adding a source) never appear in the
+    sidebar until the whole app is restarted.
+    """
     return store.read_sources()
+
+
+def sources_df() -> pd.DataFrame:
+    try:
+        mtime = config.SOURCES_CSV.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return _sources_df_cached(mtime)
 
 
 # --- sport inference for display badges (general, no hard-coded names) ------
