@@ -307,13 +307,41 @@ def render_sidebar() -> list[str]:
 
     st.sidebar.divider()
 
+    running = st.session_state.get("running", False)
+    if running:
+        st.sidebar.markdown(
+            "<div style='padding:6px 10px;border-radius:8px;"
+            "background:rgba(46,204,113,0.15);border:1px solid #2ecc71;"
+            "color:#2ecc71;font-weight:700;text-align:center;'>"
+            "🟢 Running</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.sidebar.markdown(
+            "<div style='padding:6px 10px;border-radius:8px;"
+            "background:rgba(241,196,15,0.15);border:1px solid #f1c40f;"
+            "color:#f1c40f;font-weight:700;text-align:center;'>"
+            "⏸ Paused</div>",
+            unsafe_allow_html=True,
+        )
+
     c1, c2 = st.sidebar.columns(2)
-    if c1.button("▶ Start", width="stretch", type="primary"):
+    if c1.button(
+        "▶ Start",
+        width="stretch",
+        type="primary" if not running else "secondary",
+        disabled=running,
+    ):
         st.session_state.running = True
         st.session_state.error = ""
-    if c2.button("⏸ Stop", width="stretch"):
+    if c2.button(
+        "⏸ Pause",
+        width="stretch",
+        type="primary" if running else "secondary",
+        disabled=not running,
+    ):
         st.session_state.running = False
-        st.session_state.status = "⏸ Stopped."
+        st.session_state.status = "⏸ Paused."
 
     if st.sidebar.button("♻ Reset demo", width="stretch"):
         store.reset_all()
@@ -438,7 +466,24 @@ def _render_manual_post_form(selected: list[str]) -> None:
     lands with ``processed = 0``, so it is picked up on the next tick exactly
     like a fetched post.
     """
-    with st.sidebar.expander("➕ Add a fictional post", expanded=False):
+    # Subtle pulse on the submit button so it invites a click, without any
+    # extra banner or copy. Scoped to the sidebar's form-submit button, which
+    # in this app is uniquely the "Inject post" action.
+    st.sidebar.markdown(
+        """
+        <style>
+          @keyframes tp-inject-pulse {
+            0%, 100% { box-shadow: 0 0 0 rgba(255,75,75,0.0); }
+            50%      { box-shadow: 0 0 12px rgba(255,75,75,0.65); }
+          }
+          [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
+            animation: tp-inject-pulse 1.8s ease-in-out infinite;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.sidebar.expander("➕ Add a fictional post", expanded=True):
         st.caption("Only the post text is needed — the rest is pre-filled.")
         with st.form("manual_post", clear_on_submit=True):
             text = st.text_area(
@@ -519,7 +564,7 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
     if (
         st.session_state.get("collect_enabled", True)
         and not st.session_state.get("custom_posts", False)
-        and len(unprocessed) < 3
+        and len(unprocessed) < config.FETCH_BATCH_SIZE
         and collector.unreleased_count(selected) > 0
     ):
         rows = collector.fetch_new_posts(selected, config.FETCH_BATCH_SIZE)

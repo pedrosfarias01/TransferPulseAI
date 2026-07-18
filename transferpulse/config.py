@@ -14,8 +14,9 @@ MODEL = "gpt-4o-2024-08-06"
 SEED = 42
 
 # --- Pipeline cadence ------------------------------------------------------
-# How many posts Agent 1 releases from the fixture per fetch.
-FETCH_BATCH_SIZE = 3
+# How many posts Agent 1 releases from the fixture per fetch. 1 gives the
+# demo a clean fetch → assess → score → fetch rhythm; raise to burst-load.
+FETCH_BATCH_SIZE = 1
 # Seconds to pause between pipeline ticks so a human can follow the flow.
 # Adjustable at runtime via sidebar → Dev tools; this is only the default.
 TICK_SLEEP_SECONDS = 4.0
