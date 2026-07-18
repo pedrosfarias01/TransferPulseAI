@@ -550,10 +550,15 @@ def _source_credibility(handle: str) -> tuple[int, str]:
 def run_one_tick(selected: list[str], client: OpenAI) -> bool:
     """Do one unit of pipeline work. Returns True if work was done.
 
-    Priority:
-      1. Queue has < 3 unprocessed posts and fixture not exhausted → Agent 1.
-      2. An events row is unpriced → Agent 3 on the oldest.
-      3. A raw post is unprocessed → Agent 2 on the oldest.
+    Priority — drain the pipeline from the deep end so each post travels
+    cleanly Agent 1 → 2 → 3 before the next one is fetched:
+      1. An events row is unpriced → Agent 3 on the oldest.
+      2. A raw post is unprocessed → Agent 2 on the oldest.
+      3. Nothing left to review or score, and fixture not exhausted → Agent 1.
+
+    Collect is deliberately LAST: if it ran first it would top the queue up
+    the moment Agent 2 emptied it, cutting in front of Agent 3 and making the
+    banner hop 1 → 2 → 1 → 3 instead of 1 → 2 → 3.
     """
     raw = store.read_raw_posts()
     unprocessed = (
@@ -561,26 +566,7 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
         else raw
     )
 
-    # --- 1. keep the queue topped up ---------------------------------------
-    # Skip the fixture entirely when the user has loaded their own posts: the
-    # loaded set IS the whole queue, so the collector must not add defaults.
-    # The Dev tools toggle can also switch collection off mid-demo.
-    if (
-        st.session_state.get("collect_enabled", True)
-        and not st.session_state.get("custom_posts", False)
-        and len(unprocessed) < config.FETCH_BATCH_SIZE
-        and collector.unreleased_count(selected) > 0
-    ):
-        rows = collector.fetch_new_posts(selected, config.FETCH_BATCH_SIZE)
-        if rows:
-            store.append_raw_posts(rows)
-            handles = ", ".join(f"@{r['source_handle']}" for r in rows)
-            note = f"Fetched {len(rows)} post(s) — {handles}"
-            _set_stage("collect", note, _snippet(rows[0]["raw_content"]))
-            st.session_state.status = f"Agent 1 · Content Collector: {note}"
-            return True
-
-    # --- 2. price the oldest unpriced signal -------------------------------
+    # --- 1. price the oldest unpriced signal -------------------------------
     events = store.read_events()
     if not events.empty:
         unpriced = events[events["impact_score"].astype(str).str.strip() == ""]
@@ -651,7 +637,7 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
                         print(f"[notifier] Slack alert failed: {detail}", flush=True)
             return True
 
-    # --- 3. assess the oldest unprocessed post -----------------------------
+    # --- 2. assess the oldest unprocessed post -----------------------------
     if not unprocessed.empty:
         row = unprocessed.sort_values("id", key=lambda c: pd.to_numeric(c)).iloc[0]
         post = row.to_dict()
@@ -699,6 +685,27 @@ def run_one_tick(selected: list[str], client: OpenAI) -> bool:
             f"Agent 2 · Content Reviewer: @{handle} → {n} signal(s)"
         )
         return True
+
+    # --- 3. nothing to score or review → top the queue up ------------------
+    # Runs only when Agents 2 and 3 have nothing left, so the just-collected
+    # post flows fully through 1 → 2 → 3 before the next one is fetched.
+    # Skip the fixture entirely when the user has loaded their own posts: the
+    # loaded set IS the whole queue, so the collector must not add defaults.
+    # The Dev tools toggle can also switch collection off mid-demo.
+    if (
+        st.session_state.get("collect_enabled", True)
+        and not st.session_state.get("custom_posts", False)
+        and len(unprocessed) < config.FETCH_BATCH_SIZE
+        and collector.unreleased_count(selected) > 0
+    ):
+        rows = collector.fetch_new_posts(selected, config.FETCH_BATCH_SIZE)
+        if rows:
+            store.append_raw_posts(rows)
+            handles = ", ".join(f"@{r['source_handle']}" for r in rows)
+            note = f"Fetched {len(rows)} post(s) — {handles}"
+            _set_stage("collect", note, _snippet(rows[0]["raw_content"]))
+            st.session_state.status = f"Agent 1 · Content Collector: {note}"
+            return True
 
     return False
 
