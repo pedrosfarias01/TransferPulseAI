@@ -108,8 +108,24 @@ def _write(path, df: pd.DataFrame) -> None:
 
 # --- public read helpers ---------------------------------------------------
 def read_fixture_posts() -> pd.DataFrame:
-    """The provided 30-post fixture Agent 1 releases from (read-only)."""
-    return _read(config.FIXTURES_POSTS, source=True)
+    """The provided posts fixture Agent 1 releases from (read-only).
+
+    Returned sorted by ``posted_at`` ascending so the collector releases posts
+    in the order they were published — the pipeline reasons over a timeline,
+    so an older post landing after a newer one would confuse the assessor.
+    Rows with an unparseable date fall to the end but keep their relative
+    file order.
+    """
+    df = _read(config.FIXTURES_POSTS, source=True)
+    if df.empty or "posted_at" not in df.columns:
+        return df
+    when = pd.to_datetime(df["posted_at"], errors="coerce", utc=True)
+    return (
+        df.assign(_ts=when)
+        .sort_values("_ts", kind="stable", na_position="last")
+        .drop(columns="_ts")
+        .reset_index(drop=True)
+    )
 
 
 def read_sources() -> pd.DataFrame:

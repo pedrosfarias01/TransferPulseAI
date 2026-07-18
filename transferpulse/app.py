@@ -1073,7 +1073,7 @@ def main() -> None:
     st.divider()
 
     tab_feed, tab_signals, tab_markets = st.tabs(
-        ["📥 Live Feed", "🎯 Signals", "📈 Markets"]
+        ["📥 Live Feed", "🎯 Signals", "🗂 Timeline Board"]
     )
     with tab_feed:
         render_live_feed()
